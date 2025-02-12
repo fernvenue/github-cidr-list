@@ -1,0 +1,37 @@
+stages:
+  - update
+
+update:
+  stage: update
+  script:
+    - apt update -y && apt install -y jq
+    - git clone https://gitlab.com/$GIT_NAME/github-cidr-list.git && cd github-cidr-list && rm *.txt
+    - curl -s "https://api.github.com/meta" > github-meta.json
+    - jq -r '.web[], .api[], .git[], .packages[], .pages[]' github-meta.json > github.list
+    - sed -i "s/[[:space:]]//g" github.list
+    - wget `curl -s https://api.github.com/repos/zhanhb/cidr-merger/releases/latest | grep -Po '(?<=download_url\").*linux-amd64' | sed "s/^...//"`
+    - chmod +x cidr-merger-linux-amd64
+    - grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" github.list > github-ipv4.list
+    - grep -E "^[a-fA-F0-9:]+\/" github.list > github-ipv6.list
+    - cat *ipv4.list | ./cidr-merger-linux-amd64 -s > ipv4.txt
+    - cat *ipv6.list | ./cidr-merger-linux-amd64 -s > ipv6.txt
+    - cat ipv4.txt ipv6.txt > ip.txt && rm cidr-merger-linux-amd64 *.list
+    - if test -z "$(git status -s)"; then exit 0; fi
+    - for i in *.txt; do cp $i `echo "$i" | sed "s/txt/conf/"`; done
+    - for i in *.txt; do cp $i `echo "$i" | sed "s/txt/yaml/"`; done
+    - sed -i "s|^|IP-CIDR,|g" *.conf && cat ipv4.txt ipv6.txt > ip.txt
+    - cat ipv4.yaml ipv6.yaml > ip.yaml
+    - sed -i -e "s|^|  - '&|g" -e "s|$|&'|g" -e "1s|^|payload:\n|" ./*.yaml
+    - wget `curl -s https://api.github.com/repos/carrnot/mmdb-go/releases/latest | grep -Po '(?<=download_url\").*linux64.tar.gz' | sed "s/^...//"`
+    - tar xvf mmdb-go*.tar.gz && rm *.tar.gz *.mmdb && chmod +x mmdb-go
+    - ./mmdb-go -i ipv4.txt -o ipv4.mmdb
+    - ./mmdb-go -i ipv6.txt -o ipv6.mmdb
+    - ./mmdb-go -i ip.txt -o ip.mmdb && rm mmdb-go
+    - date=`date --rfc-3339 sec`
+    - git config --global user.email $GIT_EMAIL
+    - git config --global user.name $GIT_NAME
+    - git init
+    - git add .
+    - git commit -m "$date"
+    - git push https://gitlab-ci:$GIT_TOKEN@gitlab.com/$GIT_NAME/github-cidr-list.git master
+
